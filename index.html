@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>espPLC · Control Panel</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --chassis: #0d1117;
+    --panel: #131a22;
+    --panel-raised: #182029;
+    --rail: #0a0e13;
+    --border: #253340;
+    --border-bright: #33475a;
+    --grid-line: rgba(79,179,255,0.035);
+
+    --text: #e6edf3;
+    --text-mid: #8b9bab;
+    --text-dim: #4d5a68;
+
+    --run: #39d98a;
+    --run-dim: #164d34;
+    --warn: #ffb020;
+    --warn-dim: #5a3f0a;
+    --alarm: #ff5c5c;
+    --alarm-dim: #5c1f1f;
+    --data: #4fb3ff;
+    --data-dim: #143a52;
+
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    --display: 'Space Grotesk', sans-serif;
+    --sans: 'Inter', -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--chassis);
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 28px 28px;
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ================= HEADER ================= */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    height: 56px;
+    background: var(--rail);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .brand { display: flex; align-items: center; gap: 12px; }
+
+  .brand-chip {
+    width: 28px; height: 28px;
+    border: 1.5px solid var(--data);
+    border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-weight: 700; font-size: 11px;
+    color: var(--data);
+    box-shadow: 0 0 10px rgba(79,179,255,0.25);
+  }
+
+  .brand-name {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.2px;
+  }
+
+  .brand-name .sub {
+    font-family: var(--mono);
+    font-weight: 400;
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .header-right { display: flex; align-items: center; gap: 20px; }
+
+  .sys-metric {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-mid);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sys-metric b { color: var(--text); font-size: 12px; }
+
+  .divider-v { width: 1px; height: 20px; background: var(--border); }
+
+  .icon-btn {
+    width: 32px; height: 32px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 5px;
+    color: var(--text-mid);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    transition: all 0.15s;
+  }
+
+  .icon-btn:hover { border-color: var(--data); color: var(--data); }
+
+  /* ================= BODY LAYOUT ================= */
+  .body-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: 1fr auto;
+    min-height: 0;
+  }
+
+  @media (max-width: 880px) {
+    .body-grid { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  }
+
+  /* ============ LEFT: DIN RAIL DEVICE LIST ============ */
+  .rail {
+    background: var(--rail);
+    border-right: 1px solid var(--border);
+    padding: 16px 12px;
+    overflow-y: auto;
+  }
+
+  .rail-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 0 6px 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .terminal {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    background: var(--panel);
+    transition: all 0.15s;
+    position: relative;
+  }
+
+  .terminal::before {
+    content: '';
+    position: absolute;
+    left: -1px; top: -1px; bottom: -1px;
+    width: 3px;
+    border-radius: 3px 0 0 3px;
+    background: var(--text-dim);
+  }
+
+  .terminal.live::before { background: var(--run); }
+  .terminal.stale::before { background: var(--warn); }
+  .terminal.selected { border-color: var(--data); background: var(--panel-raised); }
+
+  .terminal-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    width: 18px;
+  }
+
+  .terminal-body { flex: 1; min-width: 0; }
+
+  .terminal-id {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .terminal-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+  }
+
+  .dot.live { background: var(--run); box-shadow: 0 0 5px var(--run); }
+  .dot.stale { background: var(--warn); }
+
+  .rail-empty {
+    text-align: center;
+    padding: 40px 10px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  /* ============ MAIN: DETAIL PANEL ============ */
+  .main {
+    padding: 20px;
+    overflow-y: auto;
+    min-width: 0;
+  }
+
+  .hmi-ribbon {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .hmi-ribbon .id {
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .hmi-ribbon .meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-mid);
+  }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 4px 9px;
+    border-radius: 3px;
+    border: 1px solid;
+  }
+
+  .badge.run { color: var(--run); border-color: var(--run-dim); background: rgba(57,217,138,0.08); }
+  .badge.warn { color: var(--warn); border-color: var(--warn-dim); background: rgba(255,176,32,0.08); }
+
+  .readout-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .readout-tile {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    position: relative;
+  }
+
+  .readout-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .readout-value {
+    font-family: var(--mono);
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--data);
+    line-height: 1;
+    word-break: break-all;
+  }
+
+  /* ============ LED CONTROL PANEL ============ */
+  .led-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+  }
+
+  .led-panel-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .led-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+  }
+
+  .led-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel-raised);
+    color: var(--text-mid);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    width: 100%;
+  }
+
+  .led-btn:hover { border-color: var(--border-bright); }
+
+  .led-btn .led-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+
+  .led-btn .led-state {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  .led-btn.red.on { border-color: var(--alarm); color: var(--text); background: rgba(255,92,92,0.08); }
+  .led-btn.red.on .led-dot { background: var(--alarm); box-shadow: 0 0 8px var(--alarm); }
+  .led-btn.red.on .led-state { color: var(--alarm); }
+
+  .led-btn.green.on { border-color: var(--run); color: var(--text); background: rgba(57,217,138,0.08); }
+  .led-btn.green.on .led-dot { background: var(--run); box-shadow: 0 0 8px var(--run); }
+  .led-btn.green.on .led-state { color: var(--run); }
+
+  .led-btn.yellow.on { border-color: var(--warn); color: var(--text); background: rgba(255,176,32,0.08); }
+  .led-btn.yellow.on .led-dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .led-btn.yellow.on .led-state { color: var(--warn); }
+
+  .main-empty {
+    height: 60vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .main-empty .glyph {
+    font-size: 40px;
+    color: var(--border-bright);
+  }
+
+  /* ============ EVENT LOG (bottom, full width) ============ */
+  .eventlog {
+    grid-column: 1 / -1;
+    background: var(--rail);
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    height: 140px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+
+  .eventlog .line { color: var(--text-mid); padding: 2px 0; }
+  .eventlog .line .ts { color: var(--text-dim); margin-right: 8px; }
+  .eventlog .line.ok { color: var(--run); }
+  .eventlog .line.err { color: var(--alarm); }
+  .eventlog .line.warn { color: var(--warn); }
+
+  /* ============ SETTINGS DRAWER ============ */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    z-index: 50;
+  }
+  .overlay.open { display: block; }
+
+  .drawer {
+    position: fixed;
+    top: 0; right: 0;
+    width: 340px;
+    height: 100%;
+    background: var(--panel);
+    border-left: 1px solid var(--border-bright);
+    z-index: 51;
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .drawer.open { transform: translateX(0); }
+
+  .drawer h3 {
+    font-family: var(--display);
+    font-size: 15px;
+    margin-bottom: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .close-x { cursor: pointer; color: var(--text-dim); font-size: 18px; }
+
+  .field { margin-bottom: 12px; }
+
+  .field label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5px;
+  }
+
+  .field input {
+    width: 100%;
+    background: var(--rail);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 9px 10px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  .field input:focus { outline: none; border-color: var(--data); }
+
+  .row-2 { display: grid; grid-template-columns: 1fr 92px; gap: 8px; }
+
+  .btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid var(--data);
+    background: transparent;
+    color: var(--data);
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .btn:hover { background: var(--data); color: #051622; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn.alarm { border-color: var(--alarm); color: var(--alarm); }
+  .btn.alarm:hover { background: var(--alarm); color: #1a0505; }
+
+  .hint {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    margin-top: 6px;
+  }
+
+  .section-gap { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <div class="brand-chip">ES</div>
+    <div class="brand-name">espPLC <span class="sub">control panel</span></div>
+  </div>
+  <div class="header-right">
+    <div class="sys-metric">SESSIONS <b id="mSessions">0</b></div>
+    <div class="divider-v"></div>
+    <div class="sys-metric">
+      <div class="dot" id="ledConn"></div>
+      <b id="connLabel">Offline</b>
+    </div>
+    <div class="divider-v"></div>
+    <div class="icon-btn" id="btnSettings" title="Cài đặt kết nối">⚙</div>
+  </div>
+</div>
+
+<div class="body-grid">
+  <div class="rail">
+    <div class="rail-title"><span>Thiết bị</span><span id="deviceTotal">0</span></div>
+    <div id="railList">
+      <div class="rail-empty">Chưa có thiết bị nào online.<br>Mở Cài đặt (⚙) để kết nối.</div>
+    </div>
+  </div>
+
+  <div class="main" id="mainPanel">
+    <div class="main-empty">
+      <div class="glyph">▢</div>
+      Chọn 1 thiết bị bên trái để xem chi tiết<br>hoặc chờ dữ liệu đầu tiên gửi lên.
+    </div>
+  </div>
+
+  <div class="eventlog" id="console"></div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer">
+  <h3>Kết nối Broker <span class="close-x" id="closeDrawer">✕</span></h3>
+
+  <div class="field">
+    <label>Host</label>
+    <input id="cfgHost" type="text" placeholder="xxxxx.ala.ap-southeast-1.emqxsl.com">
+  </div>
+  <div class="row-2">
+    <div class="field">
+      <label>Path</label>
+      <input id="cfgPath" type="text" value="/mqtt">
+    </div>
+    <div class="field">
+      <label>Port</label>
+      <input id="cfgPort" type="text" value="8084">
+    </div>
+  </div>
+  <div class="field">
+    <label>Username</label>
+    <input id="cfgUser" type="text" placeholder="dashboard_readonly">
+  </div>
+  <div class="field">
+    <label>Password</label>
+    <input id="cfgPass" type="password">
+  </div>
+  <div class="field">
+    <label>Topic Pattern (subscribe)</label>
+    <input id="cfgTopic" type="text" value="espplc/+/state">
+  </div>
+
+  <button class="btn" id="btnConnect">Kết nối</button>
+  <button class="btn alarm" id="btnDisconnect" disabled>Ngắt kết nối</button>
+
+  <div class="hint">
+    Tài khoản này cần quyền vừa Subscribe vừa Publish (để gửi lệnh điều khiển LED xuống board) — nên tạo 1 ACL riêng cho dashboard, chỉ cho phép publish vào topic <code>espplc/+/cmd</code> và subscribe <code>espplc/+/state</code>, không dùng tài khoản admin.
+  </div>
+
+  <div class="section-gap">
+    <label style="font-family:var(--mono);font-size:10.5px;color:var(--text-dim);text-transform:uppercase;">Giao thức 2 chiều</label>
+    <div class="hint" style="margin-top:6px;">
+      <b style="color:var(--text-mid)">Board &rarr; Web</b> (topic <code>espplc/{device_id}/state</code>, retained):<br>
+      <code>{"uptime":123,"heap":45000,"red":true,"green":false,"yellow":true}</code><br><br>
+      <b style="color:var(--text-mid)">Web &rarr; Board</b> (topic <code>espplc/{device_id}/cmd</code>):<br>
+      <code>{"red":true}</code> — chỉ cần gửi field muốn đổi.<br><br>
+      Board publish lại state ngay khi có thay đổi (do nút nhấn vật lý hoặc do lệnh từ web), nên 2 bên luôn đồng bộ. Các key khác ngoài red/green/yellow sẽ tự hiện thành ô đọc số.
+    </div>
+  </div>
+</div>
+
+<script>
+let client = null;
+const devices = {};
+let selectedId = null;
+let subscribedPattern = 'espplc/+/state';
+const STALE_MS = 30000;
+const LED_KEYS = ['red', 'green', 'yellow'];
+const LED_LABELS = { red: 'ĐỎ', green: 'XANH', yellow: 'VÀNG' };
+
+const $ = id => document.getElementById(id);
+
+function log(msg, type = '') {
+  const el = $('console');
+  const line = document.createElement('div');
+  line.className = 'line ' + type;
+  const time = new Date().toLocaleTimeString('vi-VN');
+  line.innerHTML = `<span class="ts">${time}</span>${escapeHtml(msg)}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function setConnState(state) {
+  const led = $('ledConn');
+  const label = $('connLabel');
+  led.className = 'dot';
+  if (state === 'connected') {
+    led.classList.add('live');
+    label.textContent = 'Online';
+    $('btnConnect').disabled = true;
+    $('btnDisconnect').disabled = false;
+  } else if (state === 'connecting') {
+    label.textContent = 'Đang nối...';
+    $('btnConnect').disabled = true;
+    $('btnDisconnect').disabled = true;
+  } else if (state === 'error') {
+    led.classList.add('stale');
+    label.textContent = 'Lỗi';
+    $('btnConnect').disabled = false;
+    $('btnDisconnect').disabled = true;
+  } else {
+    label.textContent = 'Offline';
+    $('btnConnect').disabled = false;
+    $('btnDisconnect').disabled = true;
+  }
+}
+
+function connect() {
+  const host = $('cfgHost').value.trim();
+  const port = $('cfgPort').value.trim();
+  const path = $('cfgPath').value.trim() || '/mqtt';
+  const user = $('cfgUser').value.trim();
+  const pass = $('cfgPass').value;
+  const topic = $('cfgTopic').value.trim();
+
+  if (!host) { log('Chưa nhập Host', 'err'); return; }
+  if (!topic) { log('Chưa nhập Topic', 'err'); return; }
+
+  const url = `wss://${host}:${port}${path}`;
+  log(`Đang kết nối ${url} ...`);
+  setConnState('connecting');
+
+  client = mqtt.connect(url, {
+    username: user || undefined,
+    password: pass || undefined,
+    clientId: 'dashboard_' + Math.random().toString(16).slice(2, 10),
+    reconnectPeriod: 4000,
+    connectTimeout: 10000,
+  });
+
+  client.on('connect', () => {
+    setConnState('connected');
+    log('Kết nối thành công', 'ok');
+    subscribedPattern = topic;
+    client.subscribe(topic, err => {
+      if (err) log(`Subscribe lỗi: ${err.message}`, 'err');
+      else log(`Đã subscribe: ${topic}`, 'ok');
+    });
+    closeDrawer();
+  });
+
+  client.on('message', (t, payload) => handleMessage(t, payload.toString()));
+  client.on('error', err => { setConnState('error'); log(`Lỗi: ${err.message}`, 'err'); });
+  client.on('reconnect', () => { setConnState('connecting'); log('Đang thử kết nối lại...', 'warn'); });
+  client.on('close', () => setConnState('disconnected'));
+}
+
+function disconnect() {
+  if (client) { client.end(true); client = null; }
+  setConnState('disconnected');
+  log('Đã ngắt kết nối');
+}
+
+// Suy ra topic lệnh (.../cmd) từ topic pattern đang subscribe (.../state), giữ nguyên prefix tuỳ chỉnh
+function cmdTopicFor(deviceId) {
+  const segs = (subscribedPattern || 'espplc/+/state').split('/');
+  const mapped = segs.map(s => (s === '+' ? deviceId : s));
+  mapped[mapped.length - 1] = 'cmd';
+  return mapped.join('/');
+}
+
+function toggleLed(deviceId, key, newVal) {
+  if (!client || !client.connected) { log('Chưa kết nối broker, không thể gửi lệnh', 'err'); return; }
+  const topic = cmdTopicFor(deviceId);
+  const payload = JSON.stringify({ [key]: newVal });
+  client.publish(topic, payload);
+  log(`Gửi lệnh -> ${topic}: ${payload}`);
+
+  // Cập nhật lạc quan trên UI, trạng thái thật sẽ được board xác nhận lại ngay qua topic state
+  if (devices[deviceId]) {
+    devices[deviceId].data[key] = newVal;
+    renderRail();
+    if (selectedId === deviceId) renderMain();
+  }
+}
+
+function handleMessage(topic, raw) {
+  const parts = topic.split('/');
+  const deviceId = parts.length >= 2 ? parts[1] : topic;
+
+  let data;
+  try { data = JSON.parse(raw); }
+  catch (e) { log(`Payload không phải JSON từ ${topic}: ${raw}`, 'err'); return; }
+
+  const isNew = !devices[deviceId];
+  devices[deviceId] = { data, lastSeen: Date.now() };
+  if (isNew) { log(`Thiết bị mới: ${deviceId}`, 'ok'); if (!selectedId) selectedId = deviceId; }
+
+  renderRail();
+  if (selectedId === deviceId) renderMain();
+}
+
+function renderRail() {
+  const ids = Object.keys(devices);
+  $('deviceTotal').textContent = ids.length;
+  $('mSessions').textContent = ids.length;
+
+  const list = $('railList');
+  if (ids.length === 0) {
+    list.innerHTML = '<div class="rail-empty">Chưa có thiết bị nào online.<br>Mở Cài đặt (⚙) để kết nối.</div>';
+    return;
+  }
+
+  list.innerHTML = ids.map((id, i) => {
+    const d = devices[id];
+    const stale = (Date.now() - d.lastSeen) > STALE_MS;
+    const num = String(i + 1).padStart(2, '0');
+    return `
+      <div class="terminal ${stale ? 'stale' : 'live'} ${id === selectedId ? 'selected' : ''}" onclick="selectDevice('${id.replace(/'/g, "\\'")}')">
+        <span class="terminal-num">${num}</span>
+        <div class="dot ${stale ? 'stale' : 'live'}"></div>
+        <div class="terminal-body">
+          <div class="terminal-id">${escapeHtml(id)}</div>
+          <div class="terminal-meta">${stale ? 'mất tín hiệu' : 'đang chạy'}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectDevice(id) {
+  selectedId = id;
+  renderRail();
+  renderMain();
+}
+
+function renderMain() {
+  const main = $('mainPanel');
+  const d = devices[selectedId];
+  if (!d) {
+    main.innerHTML = `<div class="main-empty"><div class="glyph">▢</div>Chọn 1 thiết bị bên trái để xem chi tiết<br>hoặc chờ dữ liệu đầu tiên gửi lên.</div>`;
+    return;
+  }
+
+  const stale = (Date.now() - d.lastSeen) > STALE_MS;
+  const timeStr = new Date(d.lastSeen).toLocaleTimeString('vi-VN');
+
+  const tiles = Object.entries(d.data)
+    .filter(([k]) => !LED_KEYS.includes(k))
+    .map(([k, v]) => `
+    <div class="readout-tile">
+      <div class="readout-label">${escapeHtml(k)}</div>
+      <div class="readout-value">${escapeHtml(String(v))}</div>
+    </div>
+  `).join('');
+
+  const hasLeds = LED_KEYS.some(k => k in d.data);
+  const ledPanel = !hasLeds ? '' : `
+    <div class="led-panel">
+      <div class="led-panel-title">
+        <span>Điều khiển LED</span>
+        <span>2 chiều · nút vật lý + web</span>
+      </div>
+      <div class="led-grid">
+        ${LED_KEYS.map(key => {
+          const on = !!d.data[key];
+          const idJs = selectedId.replace(/'/g, "\\'");
+          return `
+            <button class="led-btn ${key} ${on ? 'on' : ''}" onclick="toggleLed('${idJs}', '${key}', ${!on})">
+              <span class="led-dot"></span>
+              <span>${LED_LABELS[key]}</span>
+              <span class="led-state">${on ? 'ON' : 'OFF'}</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+
+  main.innerHTML = `
+    <div class="hmi-ribbon">
+      <div>
+        <div class="id">${escapeHtml(selectedId)}</div>
+        <div class="meta">Cập nhật lần cuối: ${timeStr}</div>
+      </div>
+      <div class="badge ${stale ? 'warn' : 'run'}">${stale ? 'Mất tín hiệu' : 'Đang hoạt động'}</div>
+    </div>
+    ${ledPanel}
+    <div class="readout-grid">${tiles}</div>
+  `;
+}
+
+setInterval(() => {
+  if (Object.keys(devices).length > 0) { renderRail(); renderMain(); }
+}, 2000);
+
+// Drawer controls
+function openDrawer() { $('drawer').classList.add('open'); $('overlay').classList.add('open'); }
+function closeDrawer() { $('drawer').classList.remove('open'); $('overlay').classList.remove('open'); }
+
+$('btnSettings').addEventListener('click', openDrawer);
+$('closeDrawer').addEventListener('click', closeDrawer);
+$('overlay').addEventListener('click', closeDrawer);
+$('btnConnect').addEventListener('click', connect);
+$('btnDisconnect').addEventListener('click', disconnect);
+
+setConnState('disconnected');
+log('Sẵn sàng. Mở Cài đặt (⚙) để kết nối broker.');
+openDrawer();
+</script>
+
+</body>
+</html>
